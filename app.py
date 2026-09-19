@@ -7,6 +7,38 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="每日待辦清單", page_icon="📅", layout="centered")
 
+# 手機直立時 Streamlit 會把 st.columns 拆成一欄一列,月曆會變成一週七列。
+# 這段只在窄螢幕生效,讓月曆格子和任務列維持橫排。
+st.markdown(
+    """
+    <style>
+    @media (max-width: 640px) {
+        .block-container { padding: 1rem 0.6rem 4rem !important; }
+        h1 { font-size: 1.5rem !important; }
+
+        [class*="st-key-cal"] [data-testid="stHorizontalBlock"],
+        [class*="st-key-row"] [data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 0.25rem !important;
+        }
+        [class*="st-key-cal"] [data-testid="stColumn"],
+        [class*="st-key-row"] [data-testid="stColumn"] {
+            min-width: 0 !important;
+        }
+
+        [class*="st-key-cal"] .stButton button,
+        [class*="st-key-cal"] .stButton button p {
+            padding: 0.15rem 0 !important;
+            font-size: 0.72rem !important;
+            line-height: 1.25 !important;
+        }
+        [class*="st-key-row"] .stButton button { padding: 0.15rem 0 !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ---------- Supabase 連線 ----------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -222,29 +254,6 @@ def render_calendar():
     year = st.session_state.view_year
     month = st.session_state.view_month
 
-    col1, col2, col3 = st.columns([1, 3, 1])
-    with col1:
-        if st.button("◀ 上個月", use_container_width=True):
-            if month == 1:
-                st.session_state.view_year -= 1
-                st.session_state.view_month = 12
-            else:
-                st.session_state.view_month -= 1
-            st.rerun()
-    with col2:
-        st.markdown(
-            f"<h3 style='text-align:center'>{year} 年 {month} 月</h3>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("下個月 ▶", use_container_width=True):
-            if month == 12:
-                st.session_state.view_year += 1
-                st.session_state.view_month = 1
-            else:
-                st.session_state.view_month += 1
-            st.rerun()
-
     tasks = fetch_month_tasks(year, month)
     status_by_day = {}
     for t in tasks:
@@ -253,35 +262,61 @@ def render_calendar():
     cal = calendar.Calendar(firstweekday=6)  # 星期日開頭
     weeks = cal.monthdayscalendar(year, month)
     weekday_labels = ["日", "一", "二", "三", "四", "五", "六"]
-
-    header_cols = st.columns(7)
-    for i, label in enumerate(weekday_labels):
-        header_cols[i].markdown(
-            f"<div style='text-align:center;font-weight:bold'>{label}</div>",
-            unsafe_allow_html=True,
-        )
-
     today = date.today()
-    for week in weeks:
-        cols = st.columns(7)
-        for i, day_num in enumerate(week):
-            with cols[i]:
-                if day_num == 0:
-                    st.write("")
-                    continue
-                d = date(year, month, day_num)
-                d_str = d.isoformat()
-                mark = ""
-                if d_str in status_by_day:
-                    mark = "🟢" if all(status_by_day[d_str]) else "🟠"
-                prefix = "🔷" if d == today else ""
-                label = f"{prefix}{day_num} {mark}".strip()
-                if st.button(label, key=f"day_{d_str}", use_container_width=True):
-                    st.session_state.selected_date = d
-                    st.session_state.editing_id = None
-                    st.rerun()
 
-    st.caption("🟢 當日任務全部完成　🟠 當日尚有未完成任務　🔷 今天")
+    # key="cal" 會在外層加上 st-key-cal 這個 class,手機版 CSS 靠它認出月曆
+    with st.container(key="cal"):
+        col1, col2, col3 = st.columns([1, 2, 1], vertical_alignment="center")
+        with col1:
+            if st.button("◀", use_container_width=True, help="上個月"):
+                if month == 1:
+                    st.session_state.view_year -= 1
+                    st.session_state.view_month = 12
+                else:
+                    st.session_state.view_month -= 1
+                st.rerun()
+        with col2:
+            st.markdown(
+                f"<div style='text-align:center;font-weight:bold;font-size:1.1rem'>"
+                f"{year} 年 {month} 月</div>",
+                unsafe_allow_html=True,
+            )
+        with col3:
+            if st.button("▶", use_container_width=True, help="下個月"):
+                if month == 12:
+                    st.session_state.view_year += 1
+                    st.session_state.view_month = 1
+                else:
+                    st.session_state.view_month += 1
+                st.rerun()
+
+        header_cols = st.columns(7)
+        for i, label in enumerate(weekday_labels):
+            header_cols[i].markdown(
+                f"<div style='text-align:center;font-weight:bold'>{label}</div>",
+                unsafe_allow_html=True,
+            )
+
+        for week in weeks:
+            cols = st.columns(7)
+            for i, day_num in enumerate(week):
+                with cols[i]:
+                    if day_num == 0:
+                        st.write("")
+                        continue
+                    d = date(year, month, day_num)
+                    d_str = d.isoformat()
+                    mark = ""
+                    if d_str in status_by_day:
+                        mark = "🟢" if all(status_by_day[d_str]) else "🟠"
+                    prefix = "🔷" if d == today else ""
+                    label = f"{prefix}{day_num}{mark}"
+                    if st.button(label, key=f"day_{d_str}", use_container_width=True):
+                        st.session_state.selected_date = d
+                        st.session_state.editing_id = None
+                        st.rerun()
+
+    st.caption("🟢 全部完成　🟠 還有沒做完的　🔷 今天")
 
 
 # ---------- 單日任務畫面 ----------
@@ -337,39 +372,41 @@ def render_day_view(day: date):
             render_task_editor(t)
             continue
 
-        c1, c2, c3, c4 = st.columns([0.6, 5.4, 0.8, 0.8])
-        with c1:
-            checked = st.checkbox(
-                "完成",
-                value=t["is_completed"],
-                key=f"chk_{t['id']}",
-                label_visibility="collapsed",
+        with st.container(key=f"row_{t['id']}"):
+            c1, c2, c3, c4 = st.columns(
+                [0.7, 5.3, 0.9, 0.9], vertical_alignment="center"
             )
-            if checked != t["is_completed"]:
-                toggle_task(t["id"], checked)
-                st.rerun()
-        with c2:
-            color = CATEGORIES.get(t["category"], "#909399")
-            text = t["content"]
-            if t["is_completed"]:
+            with c1:
+                checked = st.checkbox(
+                    "完成",
+                    value=t["is_completed"],
+                    key=f"chk_{t['id']}",
+                    label_visibility="collapsed",
+                )
+                if checked != t["is_completed"]:
+                    toggle_task(t["id"], checked)
+                    st.rerun()
+            with c2:
+                color = CATEGORIES.get(t["category"], "#909399")
+                text = t["content"]
+                if t["is_completed"]:
+                    text = (
+                        f"<span style='text-decoration:line-through;color:gray'>"
+                        f"{text}</span>"
+                    )
                 st.markdown(
-                    f"<span style='color:{color}'>●</span> "
-                    f"<span style='text-decoration:line-through;color:gray'>{text}</span>",
+                    f"<div style='word-break:break-word;line-height:1.4'>"
+                    f"<span style='color:{color}'>●</span> {text}</div>",
                     unsafe_allow_html=True,
                 )
-            else:
-                st.markdown(
-                    f"<span style='color:{color}'>●</span> {text}",
-                    unsafe_allow_html=True,
-                )
-        with c3:
-            if st.button("✏️", key=f"edit_{t['id']}", help="編輯"):
-                st.session_state.editing_id = t["id"]
-                st.rerun()
-        with c4:
-            if st.button("🗑", key=f"del_{t['id']}", help="刪除"):
-                delete_task(t["id"])
-                st.rerun()
+            with c3:
+                if st.button("✏️", key=f"edit_{t['id']}", help="編輯"):
+                    st.session_state.editing_id = t["id"]
+                    st.rerun()
+            with c4:
+                if st.button("🗑", key=f"del_{t['id']}", help="刪除"):
+                    delete_task(t["id"])
+                    st.rerun()
 
     st.divider()
     st.write("**新增任務**")
