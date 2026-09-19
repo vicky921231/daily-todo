@@ -195,6 +195,12 @@ def toggle_task(task_id: str, is_completed: bool):
     ).execute()
 
 
+def update_task(task_id: str, content: str, category: str):
+    supabase.table("tasks").update({"content": content, "category": category}).eq(
+        "id", task_id
+    ).execute()
+
+
 def delete_task(task_id: str):
     supabase.table("tasks").delete().eq("id", task_id).execute()
 
@@ -206,6 +212,8 @@ if "view_year" not in st.session_state:
     st.session_state.view_month = today.month
 if "selected_date" not in st.session_state:
     st.session_state.selected_date = None
+if "editing_id" not in st.session_state:
+    st.session_state.editing_id = None
 
 # ---------- 月曆畫面 ----------
 
@@ -270,6 +278,7 @@ def render_calendar():
                 label = f"{prefix}{day_num} {mark}".strip()
                 if st.button(label, key=f"day_{d_str}", use_container_width=True):
                     st.session_state.selected_date = d
+                    st.session_state.editing_id = None
                     st.rerun()
 
     st.caption("🟢 當日任務全部完成　🟠 當日尚有未完成任務　🔷 今天")
@@ -278,9 +287,38 @@ def render_calendar():
 # ---------- 單日任務畫面 ----------
 
 
+def render_task_editor(t: dict):
+    """把某一列換成編輯框。"""
+    with st.form(f"edit_form_{t['id']}"):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            content = st.text_input(
+                "任務內容", value=t["content"], label_visibility="collapsed"
+            )
+        with c2:
+            names = list(CATEGORIES.keys())
+            current = names.index(t["category"]) if t["category"] in names else len(names) - 1
+            category = st.selectbox(
+                "分類", names, index=current, label_visibility="collapsed"
+            )
+
+        b1, b2 = st.columns(2)
+        saved = b1.form_submit_button("儲存", use_container_width=True)
+        cancelled = b2.form_submit_button("取消", use_container_width=True)
+
+        if saved and content.strip():
+            update_task(t["id"], content.strip(), category)
+            st.session_state.editing_id = None
+            st.rerun()
+        if cancelled:
+            st.session_state.editing_id = None
+            st.rerun()
+
+
 def render_day_view(day: date):
     if st.button("⬅ 返回月曆"):
         st.session_state.selected_date = None
+        st.session_state.editing_id = None
         st.rerun()
 
     st.subheader(day.strftime("%Y 年 %m 月 %d 日"))
@@ -295,7 +333,11 @@ def render_day_view(day: date):
         st.caption("尚未新增任務")
 
     for t in tasks:
-        c1, c2, c3 = st.columns([0.6, 6, 0.8])
+        if st.session_state.get("editing_id") == t["id"]:
+            render_task_editor(t)
+            continue
+
+        c1, c2, c3, c4 = st.columns([0.6, 5.4, 0.8, 0.8])
         with c1:
             checked = st.checkbox(
                 "完成",
@@ -321,7 +363,11 @@ def render_day_view(day: date):
                     unsafe_allow_html=True,
                 )
         with c3:
-            if st.button("🗑", key=f"del_{t['id']}"):
+            if st.button("✏️", key=f"edit_{t['id']}", help="編輯"):
+                st.session_state.editing_id = t["id"]
+                st.rerun()
+        with c4:
+            if st.button("🗑", key=f"del_{t['id']}", help="刪除"):
                 delete_task(t["id"])
                 st.rerun()
 
