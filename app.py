@@ -79,12 +79,17 @@ cookies = get_cookie_manager()
 
 
 def remember_session(session) -> None:
-    """登入成功後,把 refresh token 寫進 cookie。"""
+    """把 access token 和 refresh token 一起存進 cookie。
+
+    兩個都存,下次載入才能先用 access token 認身分。只存 refresh token 的話,
+    每次開啟都得拿它去換新的,而它是一次性的 —— 新的還沒寫回 cookie 就關掉頁面,
+    登入狀態就沒了。
+    """
     if session is None or not session.refresh_token:
         return
     cookies.set(
         COOKIE_NAME,
-        session.refresh_token,
+        f"{session.access_token}|{session.refresh_token}",
         expires_at=datetime.now(timezone.utc) + timedelta(days=COOKIE_DAYS),
         key="cookie_set",
     )
@@ -97,22 +102,36 @@ def forget_session() -> None:
         pass
 
 
+# token 真的被伺服器拒絕才算數;連線失敗之類的不該把人踢出去
+FATAL_AUTH_ERRORS = ("AuthApiError", "AuthSessionMissingError", "AuthInvalidJwtError")
+
+
 def restore_session() -> bool:
-    """重新整理後,用 cookie 裡的 refresh token 換回一組新的登入狀態。"""
-    token = cookies.get(COOKIE_NAME)
-    if not token:
+    """重新整理後,用 cookie 裡的 token 換回登入狀態。"""
+    raw = cookies.get(COOKIE_NAME)
+    if not raw or not isinstance(raw, str):
         return False
+
     try:
-        res = supabase.auth.refresh_session(token)
-    except Exception:
-        forget_session()
+        if "|" in raw:
+            access_token, refresh_token = raw.split("|", 1)
+            # access token 還沒過期的話,set_session 不會動到 refresh token
+            res = supabase.auth.set_session(access_token, refresh_token)
+        else:
+            # 舊版 cookie 只存了 refresh token,換一次就會升級成新格式
+            refresh_token = raw
+            res = supabase.auth.refresh_session(refresh_token)
+    except Exception as e:
+        if type(e).__name__ in FATAL_AUTH_ERRORS:
+            forget_session()
         return False
+
     if res.session is None:
-        forget_session()
         return False
+
     st.session_state.user = res.user
-    # refresh token 是一次性的,換完要把新的存回去
-    remember_session(res.session)
+    if res.session.refresh_token != refresh_token:
+        remember_session(res.session)  # 真的換過 token 才寫回去
     return True
 
 
